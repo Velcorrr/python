@@ -18,6 +18,7 @@ import shutil
 import ctypes
 import traceback
 import re
+import sqlite3
 from datetime import datetime, timezone
 
 USER_TOKEN = "MTUxOTQzMTUwMzg3NTAxODc2Mg.GysnGz.-HuDJFP55GocWthqs4Vu0lCQHnBEpnRRsLeTxw"
