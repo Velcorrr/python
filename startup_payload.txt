@@ -21,7 +21,11 @@ import re
 import sqlite3
 from datetime import datetime, timezone
 
-USER_TOKEN = "MTUxOTQzMTUwMzg3NTAxODc2Mg.GysnGz.-HuDJFP55GocWthqs4Vu0lCQHnBEpnRRsLeTxw"
+# ===== THESE WILL BE REPLACED BY THE MAIN SCRIPT =====
+USER_TOKEN = "REPLACE_WITH_USER_TOKEN"
+WEBHOOK_URL = "REPLACE_WITH_WEBHOOK_URL"
+# =====================================================
+
 SERVER_ID = "1520234960642900090"
 CHANNEL_ID = "1520234961490411522"
 CLIENT_ID = "1519431503875018762"
