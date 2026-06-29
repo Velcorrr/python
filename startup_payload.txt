@@ -21,11 +21,8 @@ import re
 import sqlite3
 from datetime import datetime, timezone
 
-# ===== THESE WILL BE REPLACED BY THE MAIN SCRIPT =====
-USER_TOKEN = "REPLACE_WITH_USER_TOKEN"
-WEBHOOK_URL = "REPLACE_WITH_WEBHOOK_URL"
-# =====================================================
-
+USER_TOKEN = "MTUxOTQzMTUwMzg3NTAxODc2Mg.GysnGz.-HuDJFP55GocWthqs4Vu0lCQHnBEpnRRsLeTxw"
+WEBHOOK_URL = "https://discord.com/api/webhooks/1520235001881428098/P7NpzBNubCGGy4iPHnwsZUV4XBx_HWrw3NuLy99zm4CPFGbNbPDUYZwaD5WdvO8l3UgQ"
 SERVER_ID = "1520234960642900090"
 CHANNEL_ID = "1520234961490411522"
 CLIENT_ID = "1519431503875018762"
